@@ -81,6 +81,7 @@ private:
 public:
     std::string id;
     Playback::MediaPlayer mediaPlayer {};
+    Playback::MediaPlaybackList mediaPlayerList {};
 
     std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> player_channel_;
     std::unique_ptr<flutter::EventSink<>> event_sink_;
@@ -210,6 +211,27 @@ public:
         } else if (method_call.method_name().compare("setSkipSilence") == 0) {
           result->Success(flutter::EncodableMap());
         } else if (method_call.method_name().compare("setLoopMode") == 0) {
+          auto* loopMode = std::get_if<int>(ValueOrNull(*args, "loopMode"));
+          if (!loopMode) {
+            return result->Error("loopMode_error", "loopMode argument missing");
+          }
+
+          if (loopMode == (int) 0) {
+            // off
+            mediaPlayer.IsLoopingEnabled(false);
+            mediaPlayerList.AutoRepeatEnabled(false);
+          } else if (loopMode == (int*) 1) {
+            // one
+            mediaPlayer.IsLoopingEnabled(true);
+            mediaPlayerList.AutoRepeatEnabled(false);
+          } else if (loopMode == (int*) 2) {
+            // all
+            mediaPlayerList.AutoRepeatEnabled(true);
+            mediaPlayer.IsLoopingEnabled(false);
+          }
+
+
+          
           result->Success(flutter::EncodableMap());
         } else if (method_call.method_name().compare("setShuffleMode") == 0) {
           result->Success(flutter::EncodableMap());
@@ -282,6 +304,11 @@ public:
       } else if (type->compare("silence") == 0) {
         throw "silence audiosource type is currently not supported";
       } else if (type->compare("concatenating") == 0) {
+        // clear the current list
+        mediaPlayerList.Items().Clear();
+
+        // mediaPlayerList.
+
         throw "concatenating audiosource type is currently not supported";
       } else if (type->compare("clipping") == 0) {
         throw "clipping audiosource type is currently not supported";
@@ -341,15 +368,23 @@ public:
     }
 
     int AudioPlayer::getLoopMode() {
+      // 
+      if (!mediaPlayerList.AutoRepeatEnabled() && mediaPlayerList.Items().Size() == 0) {
+        return 2;
+      }
+
       if (!mediaPlayer.IsLoopingEnabled()) {
         return 0;
       }
-      // TODO(bdlukaa): when playlists is enabled, return 2 when it's looping all
+
       return 1;
     }
 
     int AudioPlayer::getShuffleMode() {
-      // TODO(bdlukaa): playlists
+      if (mediaPlayerList.ShuffleEnabled()) {
+        return 1;
+      }
+
       return 0;
     }
 
