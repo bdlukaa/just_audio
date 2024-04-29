@@ -1,6 +1,7 @@
-## [next]
+## 0.2.1
 
 * [fix]: `currentIndex` is now always getting reported correctly in events ([#15](https://github.com/bdlukaa/just_audio_windows/issues/15), [#16](https://github.com/bdlukaa/just_audio_windows/issues/16))
+* [fix]: Support multi-byte language paths ([#34](https://github.com/bdlukaa/just_audio_windows/pull/34))
 
 ## [0.2.0]
 
