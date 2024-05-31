@@ -1,6 +1,6 @@
 name: just_audio_windows
 description: Windows platform implementation of just_audio. Implemented using WinRT MediaPlayer
-version: 0.2.1
+version: 0.2.2
 homepage: https://github.com/bdlukaa/just_audio_windows/tree/master/just_audio_windows
 
 environment:

@@ -627,7 +627,7 @@ public:
     broadcastState();
   }
 
-  void AudioPlayer::seekToPosition(int microseconds) {
+  void AudioPlayer::seekToPosition(long microseconds) {
     mediaPlayer.Position(TimeSpan(std::chrono::microseconds(microseconds)));
 
     broadcastState();
