@@ -337,10 +337,12 @@ public:
         seekToItem((uint32_t)*index);
       }
 
-      const auto* position = std::get_if<int>(ValueOrNull(*args, "position"));
+      const auto* position = ValueOrNull(*args, "position");
+
       if (position != nullptr) {
-        seekToPosition(*position);
+        seekToPosition((*position).LongValue());
       }
+      
       result->Success(flutter::EncodableMap());
     } else if (method_call.method_name().compare("concatenatingInsertAll") == 0) {
       const auto* index = std::get_if<int>(ValueOrNull(*args, "index"));
@@ -627,7 +629,7 @@ public:
     broadcastState();
   }
 
-  void AudioPlayer::seekToPosition(long microseconds) {
+  void AudioPlayer::seekToPosition(int64_t microseconds) {
     mediaPlayer.Position(TimeSpan(std::chrono::microseconds(microseconds)));
 
     broadcastState();
