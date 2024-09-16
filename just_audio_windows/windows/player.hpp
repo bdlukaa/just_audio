@@ -530,7 +530,7 @@ public:
     catch (...)
     {
       // If an error occurs, log it and use 1 as the buffering progress
-      std::cerr << "[just_audio_windows]: Broadcast playback evcent error: Error accessing BufferingProgress. Using default value of 1." << std::endl;
+      std::cerr << "[just_audio_windows]: Broadcast playback event error: Error accessing BufferingProgress. Using default value of 1." << std::endl;
       bufferingProgress = 1;
     }
 

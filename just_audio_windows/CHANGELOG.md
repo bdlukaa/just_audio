@@ -1,3 +1,7 @@
+## 0.2.2
+
+* [fix]: Seeking in long tracks (above 36m) ([#36](https://github.com/bdlukaa/just_audio_windows/pull/36))
+
 ## 0.2.1
 
 * [fix]: `currentIndex` is now always getting reported correctly in events ([#15](https://github.com/bdlukaa/just_audio_windows/issues/15), [#16](https://github.com/bdlukaa/just_audio_windows/issues/16))
