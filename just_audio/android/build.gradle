@@ -1,6 +1,6 @@
 group 'com.ryanheise.just_audio'
 version '1.0'
-def args = ["-Xlint:deprecation","-Xlint:unchecked","-Werror"]
+def args = ["-Xlint:deprecation","-Xlint:unchecked"]
 
 buildscript {
     repositories {
@@ -31,10 +31,10 @@ android {
     if (project.android.hasProperty("namespace")) {
         namespace 'com.ryanheise.just_audio'
     }
-    compileSdkVersion 33
+    compileSdk 34
 
     defaultConfig {
-        minSdkVersion 16
+        minSdk 16
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -46,12 +46,13 @@ android {
         sourceCompatibility 1.8
         targetCompatibility 1.8
     }
+
+    dependencies {
+        def exoplayer_version = "2.18.7"
+        implementation "com.google.android.exoplayer:exoplayer-core:$exoplayer_version"
+        implementation "com.google.android.exoplayer:exoplayer-dash:$exoplayer_version"
+        implementation "com.google.android.exoplayer:exoplayer-hls:$exoplayer_version"
+        implementation "com.google.android.exoplayer:exoplayer-smoothstreaming:$exoplayer_version"
+    }
 }
 
-dependencies {
-    def exoplayer_version = "2.18.7"
-    implementation "com.google.android.exoplayer:exoplayer-core:$exoplayer_version"
-    implementation "com.google.android.exoplayer:exoplayer-dash:$exoplayer_version"
-    implementation "com.google.android.exoplayer:exoplayer-hls:$exoplayer_version"
-    implementation "com.google.android.exoplayer:exoplayer-smoothstreaming:$exoplayer_version"
-}

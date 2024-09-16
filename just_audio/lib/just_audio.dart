@@ -58,6 +58,9 @@ class AudioPlayer {
   /// The user agent to set on all HTTP requests.
   final String? _userAgent;
 
+  /// Whether to use the proxy server to send request headers.
+  final bool _useProxyForRequestHeaders;
+
   final AudioLoadConfiguration? _audioLoadConfiguration;
 
   final bool _androidOffloadSchedulingEnabled;
@@ -131,9 +134,11 @@ class AudioPlayer {
   bool _automaticallyWaitsToMinimizeStalling = true;
   bool _canUseNetworkResourcesForLiveStreamingWhilePaused = false;
   double _preferredPeakBitRate = 0;
+  bool _allowsExternalPlayback = false;
   bool _playInterrupted = false;
   bool _platformLoading = false;
   AndroidAudioAttributes? _androidAudioAttributes;
+  WebCrossOrigin? _webCrossOrigin;
   final bool _androidApplyAudioAttributes;
   final bool _handleAudioSessionActivation;
 
@@ -142,14 +147,22 @@ class AudioPlayer {
 
   /// Creates an [AudioPlayer].
   ///
-  /// Apps requesting remote URLs should specify a `[userAgent]` string with
-  /// this constructor which will be included in the `user-agent` header on all
-  /// HTTP requests (except on web where the browser's user agent will be sent).
-  /// This header helps to identify to the server which app is submitting the
-  /// request. If unspecified, it will default to Apple's Core Audio user agent
-  /// on iOS/macOS, or just_audio's user agent on Android. Note: this feature
-  /// is implemented via a local HTTP proxy which requires non-HTTPS support to
-  /// be enabled. See the README page for setup instructions.
+  /// Apps requesting remote URLs should set the [userAgent] parameter which
+  /// will be set as the `user-agent` header on all requests (except on web
+  /// where the browser's user agent will be used) to identify the client. If
+  /// unspecified, a platform-specific default will be supplied.
+  ///
+  /// Request headers including `user-agent` are sent by default via a local
+  /// HTTP proxy which requires non-HTTPS support to be enabled (see the README
+  /// page for setup instructions). Alternatively, you can set
+  /// [useProxyForRequestHeaders] to `false` to allow supported platforms to
+  /// send the request headers directly without use of the proxy. On iOS/macOS,
+  /// this will use the `AVURLAssetHTTPUserAgentKey` on iOS 16 and above, and
+  /// macOS 13 and above, if `user-agent` is the only header used. Otherwise,
+  /// the `AVURLAssetHTTPHeaderFieldsKey` key will be used. On Android, this
+  /// will use ExoPlayer's `setUserAgent` and `setDefaultRequestProperties`.
+  /// For Linux/Windows federated platform implementations, refer to the
+  /// documentation for that implementation's support.
   ///
   /// The player will automatically pause/duck and resume/unduck when audio
   /// interruptions occur (e.g. a phone call) or when headphones are unplugged.
@@ -172,6 +185,7 @@ class AudioPlayer {
     AudioLoadConfiguration? audioLoadConfiguration,
     AudioPipeline? audioPipeline,
     bool androidOffloadSchedulingEnabled = false,
+    bool useProxyForRequestHeaders = true,
   })  : _id = _uuid.v4(),
         _userAgent = userAgent,
         _androidApplyAudioAttributes =
@@ -179,7 +193,8 @@ class AudioPlayer {
         _handleAudioSessionActivation = handleAudioSessionActivation,
         _audioLoadConfiguration = audioLoadConfiguration,
         _audioPipeline = audioPipeline ?? AudioPipeline(),
-        _androidOffloadSchedulingEnabled = androidOffloadSchedulingEnabled {
+        _androidOffloadSchedulingEnabled = androidOffloadSchedulingEnabled,
+        _useProxyForRequestHeaders = useProxyForRequestHeaders {
     _audioPipeline._setup(this);
     if (_audioLoadConfiguration?.darwinLoadControl != null) {
       _automaticallyWaitsToMinimizeStalling = _audioLoadConfiguration!
@@ -550,6 +565,10 @@ class AudioPlayer {
   /// The preferred peak bit rate (in bits per second) of bandwidth usage on iOS/macOS.
   double get preferredPeakBitRate => _preferredPeakBitRate;
 
+  /// Whether the player allows external playback on iOS/macOS, defaults to
+  /// false.
+  bool get allowsExternalPlayback => _allowsExternalPlayback;
+
   /// The current position of the player.
   Duration get position => _getPositionFor(_playbackEvent);
 
@@ -655,7 +674,7 @@ class AudioPlayer {
   /// This is equivalent to:
   ///
   /// ```
-  /// setAudioSource(AudioSource.uri(Uri.parse(url), headers: headers),
+  /// setAudioSource(AudioSource.uri(Uri.parse(url), headers: headers, tag: tag),
   ///     initialPosition: Duration.zero, preload: true);
   /// ```
   ///
@@ -665,9 +684,12 @@ class AudioPlayer {
     Map<String, String>? headers,
     Duration? initialPosition,
     bool preload = true,
+    dynamic tag,
   }) =>
-      setAudioSource(AudioSource.uri(Uri.parse(url), headers: headers),
-          initialPosition: initialPosition, preload: preload);
+      setAudioSource(
+          AudioSource.uri(Uri.parse(url), headers: headers, tag: tag),
+          initialPosition: initialPosition,
+          preload: preload);
 
   /// Convenience method to set the audio source to a file, preloaded by
   /// default, with an initial position of zero by default.
@@ -675,7 +697,7 @@ class AudioPlayer {
   /// This is equivalent to:
   ///
   /// ```
-  /// setAudioSource(AudioSource.uri(Uri.file(filePath)),
+  /// setAudioSource(AudioSource.uri(Uri.file(filePath), tag: tag),
   ///     initialPosition: Duration.zero, preload: true);
   /// ```
   ///
@@ -684,8 +706,9 @@ class AudioPlayer {
     String filePath, {
     Duration? initialPosition,
     bool preload = true,
+    dynamic tag,
   }) =>
-      setAudioSource(AudioSource.file(filePath),
+      setAudioSource(AudioSource.file(filePath, tag: tag),
           initialPosition: initialPosition, preload: preload);
 
   /// Convenience method to set the audio source to an asset, preloaded by
@@ -694,7 +717,7 @@ class AudioPlayer {
   /// For assets within the same package, this is equivalent to:
   ///
   /// ```
-  /// setAudioSource(AudioSource.uri(Uri.parse('asset:///$assetPath')),
+  /// setAudioSource(AudioSource.uri(Uri.parse('asset:///$assetPath'), tag: tag),
   ///     initialPosition: Duration.zero, preload: true);
   /// ```
   ///
@@ -707,9 +730,10 @@ class AudioPlayer {
     String? package,
     bool preload = true,
     Duration? initialPosition,
+    dynamic tag,
   }) =>
       setAudioSource(
-        AudioSource.asset(assetPath, package: package),
+        AudioSource.asset(assetPath, package: package, tag: tag),
         initialPosition: initialPosition,
         preload: preload,
       );
@@ -848,7 +872,8 @@ class AudioPlayer {
       return duration;
     } on PlatformException catch (e) {
       try {
-        throw PlayerException(int.parse(e.code), e.message);
+        throw PlayerException(int.parse(e.code), e.message,
+            (e.details as Map<dynamic, dynamic>?)?.cast<String, dynamic>());
       } on FormatException catch (_) {
         if (e.code == 'abort') {
           throw PlayerInterruptedException(e.message);
@@ -864,7 +889,8 @@ class AudioPlayer {
   /// original [AudioSource]. If [end] is null, it will be reset to the end of
   /// the original [AudioSource]. This method cannot be called from the
   /// [ProcessingState.idle] state.
-  Future<Duration?> setClip({Duration? start, Duration? end}) async {
+  Future<Duration?> setClip(
+      {Duration? start, Duration? end, dynamic tag}) async {
     if (_disposed) return null;
     _setPlatformActive(true)?.catchError((dynamic e) async => null);
     final duration = await _load(
@@ -875,6 +901,7 @@ class AudioPlayer {
                 child: _audioSource as UriAudioSource,
                 start: start,
                 end: end,
+                tag: tag,
               ));
     return duration;
   }
@@ -1100,6 +1127,16 @@ class AudioPlayer {
         SetPreferredPeakBitRateRequest(bitRate: preferredPeakBitRate));
   }
 
+  /// Sets allowsExternalPlayback on iOS/macOS, defaults to false.
+  Future<void> setAllowsExternalPlayback(
+      final bool allowsExternalPlayback) async {
+    if (_disposed) return;
+    _allowsExternalPlayback = allowsExternalPlayback;
+    await (await _platform).setAllowsExternalPlayback(
+        SetAllowsExternalPlaybackRequest(
+            allowsExternalPlayback: allowsExternalPlayback));
+  }
+
   /// Seeks to a particular [position]. If a composition of multiple
   /// [AudioSource]s has been loaded, you may also specify [index] to seek to a
   /// particular item within that sequence. This method has no effect unless
@@ -1165,6 +1202,29 @@ class AudioPlayer {
         contentType: audioAttributes.contentType.index,
         flags: audioAttributes.flags.value,
         usage: audioAttributes.usage.value));
+  }
+
+  /// Set the `crossorigin` attribute on the `<audio>` element backing this
+  /// player instance on web (see
+  /// [HTMLMediaElement crossorigin](https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/crossOrigin) ).
+  ///
+  /// If [webCrossOrigin] is null (the initial state), the URL will be fetched
+  /// without CORS. If it is `useCredentials`, a CORS request will be made
+  /// exchanging credentials (via cookies/certificates/HTTP authentication)
+  /// regardless of the origin. If it is 'anonymous', a CORS request will be
+  /// made, but credentials are exchanged only if the URL is fetched from the
+  /// same origin.
+  Future<void> setWebCrossOrigin(WebCrossOrigin? webCrossOrigin) async {
+    if (_disposed) return;
+    if (!kIsWeb && !_isUnitTest()) return;
+
+    await (await _platform).setWebCrossOrigin(
+      SetWebCrossOriginRequest(
+          crossOrigin: webCrossOrigin == null
+              ? null
+              : WebCrossOriginMessage.values[webCrossOrigin.index]),
+    );
+    _webCrossOrigin = webCrossOrigin;
   }
 
   /// Release all resources associated with this player. You must invoke this
@@ -1417,6 +1477,11 @@ class AudioPlayer {
                 ? ShuffleModeMessage.all
                 : ShuffleModeMessage.none));
         if (checkInterruption()) return platform;
+        if (kIsWeb && _webCrossOrigin != null) {
+          await platform.setWebCrossOrigin(SetWebCrossOriginRequest(
+            crossOrigin: WebCrossOriginMessage.values[_webCrossOrigin!.index],
+          ));
+        }
         for (var audioEffect in _audioPipeline._audioEffects) {
           await audioEffect._activate(platform);
           if (checkInterruption()) return platform;
@@ -1492,7 +1557,13 @@ class PlayerException implements Exception {
   /// is provided.
   final String? message;
 
-  PlayerException(this.code, this.message);
+  /// On Android/iOS/macOS, contains details of the error. For errors associated
+  /// with a particular audio source, the `"index"` key maps to the index of the
+  /// audio source in the sequence.
+  final Map<String, dynamic> details;
+
+  PlayerException(this.code, this.message, [Map<String, dynamic>? details])
+      : details = details ?? <String, dynamic>{};
 
   @override
   String toString() => "($code) $message";
@@ -1785,7 +1856,7 @@ class AudioLoadConfiguration {
   /// Speed control for live streams on Android.
   final AndroidLivePlaybackSpeedControl? androidLivePlaybackSpeedControl;
 
-  AudioLoadConfiguration({
+  const AudioLoadConfiguration({
     this.darwinLoadControl,
     this.androidLoadControl,
     this.androidLivePlaybackSpeedControl,
@@ -1818,7 +1889,7 @@ class DarwinLoadControl {
   /// second.
   final double? preferredPeakBitRate;
 
-  DarwinLoadControl({
+  const DarwinLoadControl({
     this.automaticallyWaitsToMinimizeStalling = true,
     this.preferredForwardBufferDuration,
     this.canUseNetworkResourcesForLiveStreamingWhilePaused = false,
@@ -1863,7 +1934,7 @@ class AndroidLoadControl {
   /// (Android) The back buffer duration.
   final Duration backBufferDuration;
 
-  AndroidLoadControl({
+  const AndroidLoadControl({
     this.minBufferDuration = const Duration(seconds: 50),
     this.maxBufferDuration = const Duration(seconds: 50),
     this.bufferForPlaybackDuration = const Duration(milliseconds: 2500),
@@ -1916,7 +1987,7 @@ class AndroidLivePlaybackSpeedControl {
   /// achievable during playback.
   final double minPossibleLiveOffsetSmoothingFactor;
 
-  AndroidLivePlaybackSpeedControl({
+  const AndroidLivePlaybackSpeedControl({
     this.fallbackMinPlaybackSpeed = 0.97,
     this.fallbackMaxPlaybackSpeed = 1.03,
     this.minUpdateInterval = const Duration(seconds: 1),
@@ -1938,6 +2009,54 @@ class AndroidLivePlaybackSpeedControl {
             targetLiveOffsetIncrementOnRebuffer,
         minPossibleLiveOffsetSmoothingFactor:
             minPossibleLiveOffsetSmoothingFactor,
+      );
+}
+
+class ProgressiveAudioSourceOptions {
+  final AndroidExtractorOptions? androidExtractorOptions;
+  final DarwinAssetOptions? darwinAssetOptions;
+
+  const ProgressiveAudioSourceOptions({
+    this.androidExtractorOptions,
+    this.darwinAssetOptions,
+  });
+
+  ProgressiveAudioSourceOptionsMessage _toMessage() =>
+      ProgressiveAudioSourceOptionsMessage(
+        androidExtractorOptions: androidExtractorOptions?._toMessage(),
+        darwinAssetOptions: darwinAssetOptions?._toMessage(),
+      );
+}
+
+class DarwinAssetOptions {
+  final bool preferPreciseDurationAndTiming;
+
+  const DarwinAssetOptions({this.preferPreciseDurationAndTiming = false});
+
+  DarwinAssetOptionsMessage _toMessage() => DarwinAssetOptionsMessage(
+        preferPreciseDurationAndTiming: preferPreciseDurationAndTiming,
+      );
+}
+
+class AndroidExtractorOptions {
+  static const flagMp3EnableIndexSeeking = 1 << 2;
+  static const flagMp3DisableId3Metadata = 1 << 3;
+
+  final bool constantBitrateSeekingEnabled;
+  final bool constantBitrateSeekingAlwaysEnabled;
+  final int mp3Flags;
+
+  const AndroidExtractorOptions({
+    this.constantBitrateSeekingEnabled = true,
+    this.constantBitrateSeekingAlwaysEnabled = false,
+    this.mp3Flags = 0,
+  });
+
+  AndroidExtractorOptionsMessage _toMessage() => AndroidExtractorOptionsMessage(
+        constantBitrateSeekingEnabled: constantBitrateSeekingEnabled,
+        constantBitrateSeekingAlwaysEnabled:
+            constantBitrateSeekingAlwaysEnabled,
+        mp3Flags: mp3Flags,
       );
 }
 
@@ -2094,6 +2213,15 @@ abstract class AudioSource {
   ///
   /// If headers are set, just_audio will create a cleartext local HTTP proxy on
   /// your device to forward HTTP requests with headers included.
+  ///
+  /// The [tag] is for associating your app's own data with each audio source,
+  /// e.g. title, cover art, a primary key for your DB. Such data can be
+  /// conveniently retrieved from the tag while rendering the UI.
+  ///
+  /// When using just_audio_background, [tag] must be a MediaItem, a class
+  /// provided by that package. If you wish to have more control over the tag
+  /// for background audio purposes, consider using the plugin audio_service
+  /// instead of just_audio_background.
   static UriAudioSource uri(Uri uri,
       {Map<String, String>? headers, dynamic tag}) {
     bool hasExtension(Uri uri, String extension) =>
@@ -2113,7 +2241,7 @@ abstract class AudioSource {
   /// This is equivalent to:
   ///
   /// ```
-  /// AudioSource.uri(Uri.file(filePath));
+  /// AudioSource.uri(Uri.file(filePath), tag: tag);
   /// ```
   static UriAudioSource file(String filePath, {dynamic tag}) {
     return AudioSource.uri(Uri.file(filePath), tag: tag);
@@ -2124,7 +2252,7 @@ abstract class AudioSource {
   /// For assets within the same package, this is equivalent to:
   ///
   /// ```
-  /// AudioSource.uri(Uri.parse('asset:///$assetPath'));
+  /// AudioSource.uri(Uri.parse('asset:///$assetPath'), tag: tag);
   /// ```
   ///
   /// If the asset is to be loaded from a different package, the [package]
@@ -2143,6 +2271,8 @@ abstract class AudioSource {
     _player = player;
     player._registerAudioSource(this);
   }
+
+  String? get _userAgent => _player?._userAgent;
 
   void _shuffle({int? initialIndex});
 
@@ -2199,6 +2329,15 @@ abstract class UriAudioSource extends IndexedAudioSource {
   /// [uri].
   Uri get _effectiveUri => _overrideUri ?? uri;
 
+  Map<String, String>? get _mergedHeaders =>
+      headers == null && _userAgent == null
+          ? null
+          : {
+              if (headers != null)
+                for (var key in headers!.keys) key: headers![key]!,
+              if (_userAgent != null) 'User-Agent': _userAgent!,
+            };
+
   @override
   Future<void> _setup(AudioPlayer player) async {
     await super._setup(player);
@@ -2206,6 +2345,7 @@ abstract class UriAudioSource extends IndexedAudioSource {
       _overrideUri = await _loadAsset(uri.pathSegments.join('/'));
     } else if (uri.scheme != 'file' &&
         !kIsWeb &&
+        player._useProxyForRequestHeaders &&
         (headers != null || player._userAgent != null)) {
       await player._proxy.ensureRunning();
       _overrideUri = player._proxy.addUriAudioSource(this);
@@ -2274,13 +2414,24 @@ abstract class UriAudioSource extends IndexedAudioSource {
 /// If headers are set, just_audio will create a cleartext local HTTP proxy on
 /// your device to forward HTTP requests with headers included.
 class ProgressiveAudioSource extends UriAudioSource {
-  ProgressiveAudioSource(Uri uri,
-      {Map<String, String>? headers, dynamic tag, Duration? duration})
-      : super(uri, headers: headers, tag: tag, duration: duration);
+  final ProgressiveAudioSourceOptions? options;
+
+  ProgressiveAudioSource(
+    super.uri, {
+    super.headers,
+    super.tag,
+    super.duration,
+    this.options,
+  });
 
   @override
   AudioSourceMessage _toMessage() => ProgressiveAudioSourceMessage(
-      id: _id, uri: _effectiveUri.toString(), headers: headers, tag: tag);
+        id: _id,
+        uri: _effectiveUri.toString(),
+        headers: _mergedHeaders,
+        tag: tag,
+        options: options?._toMessage(),
+      );
 }
 
 /// An [AudioSource] representing a DASH stream. The following URI schemes are
@@ -2304,7 +2455,11 @@ class DashAudioSource extends UriAudioSource {
 
   @override
   AudioSourceMessage _toMessage() => DashAudioSourceMessage(
-      id: _id, uri: _effectiveUri.toString(), headers: headers, tag: tag);
+        id: _id,
+        uri: _effectiveUri.toString(),
+        headers: _mergedHeaders,
+        tag: tag,
+      );
 }
 
 /// An [AudioSource] representing an HLS stream. The following URI schemes are
@@ -2327,7 +2482,11 @@ class HlsAudioSource extends UriAudioSource {
 
   @override
   AudioSourceMessage _toMessage() => HlsAudioSourceMessage(
-      id: _id, uri: _effectiveUri.toString(), headers: headers, tag: tag);
+        id: _id,
+        uri: _effectiveUri.toString(),
+        headers: _mergedHeaders,
+        tag: tag,
+      );
 }
 
 /// An [AudioSource] for a period of silence.
@@ -2398,7 +2557,7 @@ class ConcatenatingAudioSource extends AudioSource {
         localInitialIndex = ci;
       }
       final childInitialIndex =
-          initialIndexWithinThisChild ? (initialIndex! - si) : null;
+          initialIndexWithinThisChild ? (initialIndex - si) : null;
       child._shuffle(initialIndex: childInitialIndex);
       si += childLength;
     }
@@ -3170,9 +3329,11 @@ _ProxyHandler _proxyHandlerForUri(
     // Try to make normal request
     String? host;
     try {
-      final requestHeaders = <String, String>{if (headers != null) ...headers};
+      final requestHeaders = <String, String>{};
       request.headers
           .forEach((name, value) => requestHeaders[name] = value.join(', '));
+      // write supplied headers last (to ensure supplied headers aren't overwritten)
+      headers?.forEach((name, value) => requestHeaders[name] = value);
       final originRequest =
           await _getUrl(client, redirectedUri ?? uri, headers: requestHeaders);
       host = originRequest.headers.value(HttpHeaders.hostHeader);
@@ -3370,6 +3531,9 @@ class DefaultShuffleOrder extends ShuffleOrder {
 /// An enumeration of modes that can be passed to [AudioPlayer.setLoopMode].
 enum LoopMode { off, one, all }
 
+/// Possible values that can be passed to [AudioPlayer.setWebCrossOrigin].
+enum WebCrossOrigin { anonymous, useCredentials }
+
 /// The stand-in platform implementation to use when the player is in the idle
 /// state and the native platform is deallocated.
 class _IdleAudioPlayer extends AudioPlayerPlatform {
@@ -3465,6 +3629,12 @@ class _IdleAudioPlayer extends AudioPlayerPlatform {
   Future<SetShuffleOrderResponse> setShuffleOrder(
       SetShuffleOrderRequest request) async {
     return SetShuffleOrderResponse();
+  }
+
+  @override
+  Future<SetWebCrossOriginResponse> setWebCrossOrigin(
+      SetWebCrossOriginRequest request) async {
+    return SetWebCrossOriginResponse();
   }
 
   @override
@@ -3756,7 +3926,6 @@ class AndroidEqualizerParameters {
 /// An [AudioEffect] for Android that can adjust the gain for different
 /// frequency bands of an [AudioPlayer]'s audio signal.
 class AndroidEqualizer extends AudioEffect with AndroidAudioEffect {
-  AndroidEqualizerParameters? _parameters;
   final Completer<AndroidEqualizerParameters> _parametersCompleter =
       Completer<AndroidEqualizerParameters>();
 
@@ -3772,9 +3941,9 @@ class AndroidEqualizer extends AudioEffect with AndroidAudioEffect {
     }
     final response = await platform
         .androidEqualizerGetParameters(AndroidEqualizerGetParametersRequest());
-    _parameters =
+    final receivedParameters =
         AndroidEqualizerParameters._fromMessage(_player!, response.parameters);
-    _parametersCompleter.complete(_parameters);
+    _parametersCompleter.complete(receivedParameters);
   }
 
   /// The parameter values of this equalizer.

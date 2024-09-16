@@ -77,8 +77,6 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
     private long updatePosition;
     private long updateTime;
     private long bufferedPosition;
-    private Long start;
-    private Long end;
     private Long seekPos;
     private long initialPos;
     private Integer initialIndex;
@@ -100,7 +98,6 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
     private Map<String, Object> pendingPlaybackEvent;
 
     private ExoPlayer player;
-    private DefaultExtractorsFactory extractorsFactory = new DefaultExtractorsFactory();
     private Integer audioSessionId;
     private MediaSource mediaSource;
     private Integer currentIndex;
@@ -134,7 +131,14 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
         }
     };
 
-    public AudioPlayer(final Context applicationContext, final BinaryMessenger messenger, final String id, Map<?, ?> audioLoadConfiguration, List<Object> rawAudioEffects, Boolean offloadSchedulingEnabled) {
+    public AudioPlayer(
+        final Context applicationContext,
+        final BinaryMessenger messenger,
+        final String id,
+        Map<?, ?> audioLoadConfiguration,
+        List<Object> rawAudioEffects,
+        Boolean offloadSchedulingEnabled
+    ) {
         this.context = applicationContext;
         this.rawAudioEffects = rawAudioEffects;
         this.offloadSchedulingEnabled = offloadSchedulingEnabled != null ? offloadSchedulingEnabled : false;
@@ -143,7 +147,6 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
         eventChannel = new BetterEventChannel(messenger, "com.ryanheise.just_audio.events." + id);
         dataEventChannel = new BetterEventChannel(messenger, "com.ryanheise.just_audio.data." + id);
         processingState = ProcessingState.none;
-        extractorsFactory.setConstantBitrateSeekingEnabled(true);
         if (audioLoadConfiguration != null) {
             Map<?, ?> loadControlMap = (Map<?, ?>)audioLoadConfiguration.get("androidLoadControl");
             if (loadControlMap != null) {
@@ -380,10 +383,10 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
                 Log.e(TAG, "default ExoPlaybackException: " + exoError.getUnexpectedException().getMessage());
             }
             // TODO: send both errorCode and type
-            sendError(String.valueOf(exoError.type), exoError.getMessage());
+            sendError(String.valueOf(exoError.type), exoError.getMessage(), mapOf("index", currentIndex));
         } else {
             Log.e(TAG, "default PlaybackException: " + error.getMessage());
-            sendError(String.valueOf(error.errorCode), error.getMessage());
+            sendError(String.valueOf(error.errorCode), error.getMessage(), mapOf("index", currentIndex));
         }
         errorCount++;
         if (player.hasNextMediaItem() && currentIndex != null && errorCount <= 5) {
@@ -588,25 +591,44 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
         return mediaSource;
     }
 
+    private DefaultExtractorsFactory buildExtractorsFactory(Map<?, ?> options) {
+        DefaultExtractorsFactory extractorsFactory = new DefaultExtractorsFactory();
+        boolean constantBitrateSeekingEnabled = true;
+        boolean constantBitrateSeekingAlwaysEnabled = false;
+        int mp3Flags = 0;
+        if (options != null) {
+            Map<?, ?> androidExtractorOptions = (Map<?, ?>)options.get("androidExtractorOptions");
+            if (androidExtractorOptions != null) {
+                constantBitrateSeekingEnabled = (Boolean)androidExtractorOptions.get("constantBitrateSeekingEnabled");
+                constantBitrateSeekingAlwaysEnabled = (Boolean)androidExtractorOptions.get("constantBitrateSeekingAlwaysEnabled");
+                mp3Flags = (Integer)androidExtractorOptions.get("mp3Flags");
+            }
+        }
+        extractorsFactory.setConstantBitrateSeekingEnabled(constantBitrateSeekingEnabled);
+        extractorsFactory.setConstantBitrateSeekingAlwaysEnabled(constantBitrateSeekingAlwaysEnabled);
+        extractorsFactory.setMp3ExtractorFlags(mp3Flags);
+        return extractorsFactory;
+    }
+
     private MediaSource decodeAudioSource(final Object json) {
         Map<?, ?> map = (Map<?, ?>)json;
         String id = (String)map.get("id");
         switch ((String)map.get("type")) {
         case "progressive":
-            return new ProgressiveMediaSource.Factory(buildDataSourceFactory(), extractorsFactory)
+            return new ProgressiveMediaSource.Factory(buildDataSourceFactory(mapGet(map, "headers")), buildExtractorsFactory(mapGet(map, "options")))
                     .createMediaSource(new MediaItem.Builder()
                             .setUri(Uri.parse((String)map.get("uri")))
                             .setTag(id)
                             .build());
         case "dash":
-            return new DashMediaSource.Factory(buildDataSourceFactory())
+            return new DashMediaSource.Factory(buildDataSourceFactory(mapGet(map, "headers")))
                     .createMediaSource(new MediaItem.Builder()
                             .setUri(Uri.parse((String)map.get("uri")))
                             .setMimeType(MimeTypes.APPLICATION_MPD)
                             .setTag(id)
                             .build());
         case "hls":
-            return new HlsMediaSource.Factory(buildDataSourceFactory())
+            return new HlsMediaSource.Factory(buildDataSourceFactory(mapGet(map, "headers")))
                     .createMediaSource(new MediaItem.Builder()
                             .setUri(Uri.parse((String)map.get("uri")))
                             .setMimeType(MimeTypes.APPLICATION_M3U8)
@@ -687,11 +709,24 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
         audioEffectsMap.clear();
     }
 
-    private DataSource.Factory buildDataSourceFactory() {
-        String userAgent = Util.getUserAgent(context, "just_audio");
-        DataSource.Factory httpDataSourceFactory = new DefaultHttpDataSource.Factory()
+    private DataSource.Factory buildDataSourceFactory(Map<?, ?> headers) {
+        final Map<String, String> stringHeaders = castToStringMap(headers);
+        String userAgent = null;
+        if (stringHeaders != null) {
+            userAgent = stringHeaders.remove("User-Agent");
+            if (userAgent == null) {
+                userAgent = stringHeaders.remove("user-agent");
+            }
+        }
+        if (userAgent == null) {
+            userAgent = Util.getUserAgent(context, "just_audio");
+        }
+        DefaultHttpDataSource.Factory httpDataSourceFactory = new DefaultHttpDataSource.Factory()
             .setUserAgent(userAgent)
             .setAllowCrossProtocolRedirects(true);
+        if (stringHeaders != null && stringHeaders.size() > 0) {
+            httpDataSourceFactory.setDefaultRequestProperties(stringHeaders);
+        }
         return new DefaultDataSource.Factory(context, httpDataSourceFactory);
     }
 
@@ -871,7 +906,7 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
     }
 
     private long getDuration() {
-        if (processingState == ProcessingState.none || processingState == ProcessingState.loading) {
+        if (processingState == ProcessingState.none || processingState == ProcessingState.loading || player == null) {
             return C.TIME_UNSET;
         } else {
             return player.getDuration();
@@ -879,12 +914,16 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
     }
 
     private void sendError(String errorCode, String errorMsg) {
+        sendError(errorCode, errorMsg, null);
+    }
+
+    private void sendError(String errorCode, String errorMsg, Object details) {
         if (prepareResult != null) {
-            prepareResult.error(errorCode, errorMsg, null);
+            prepareResult.error(errorCode, errorMsg, details);
             prepareResult = null;
         }
 
-        eventChannel.error(errorCode, errorMsg, null);
+        eventChannel.error(errorCode, errorMsg, details);
     }
 
     private String getLowerCaseExtension(Uri uri) {
@@ -1034,6 +1073,15 @@ public class AudioPlayer implements MethodCallHandler, Player.Listener, Metadata
             map.put((String)args[i], args[i + 1]);
         }
         return map;
+    }
+
+    static Map<String, String> castToStringMap(Map<?, ?> map) {
+        if (map == null) return null;
+        Map<String, String> map2 = new HashMap<>();
+        for (Object key : map.keySet()) {
+            map2.put((String)key, (String)map.get(key));
+        }
+        return map2;
     }
 
     enum ProcessingState {

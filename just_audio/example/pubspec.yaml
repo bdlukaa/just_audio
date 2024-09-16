@@ -3,13 +3,13 @@ description: Demonstrates how to use the just_audio plugin.
 publish_to: 'none'
 
 environment:
-  sdk: ">=2.14.0 <4.0.0"
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
   audio_session: ^0.1.14
-  rxdart: ^0.27.7
+  rxdart: ^0.28.0
   just_audio_mpv: ^0.1.6
   # Other platform implementations below:
   just_audio:

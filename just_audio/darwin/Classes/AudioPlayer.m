@@ -11,6 +11,8 @@
 #import <stdlib.h>
 #include <TargetConditionals.h>
 
+#define TREADMILL_SIZE 2
+
 // TODO: Check for and report invalid state transitions.
 // TODO: Apply Apple's guidance on seeking: https://developer.apple.com/library/archive/qa/qa1820/_index.html
 @implementation AudioPlayer {
@@ -39,11 +41,13 @@
     FlutterResult _playResult;
     id _timeObserver;
     BOOL _automaticallyWaitsToMinimizeStalling;
+    BOOL _allowsExternalPlayback;
     LoadControl *_loadControl;
     BOOL _playing;
     float _speed;
     float _volume;
     BOOL _justAdvanced;
+    BOOL _enqueuedAll;
     NSDictionary<NSString *, NSObject *> *_icyMetadata;
 }
 
@@ -81,6 +85,7 @@
     _loadResult = nil;
     _playResult = nil;
     _automaticallyWaitsToMinimizeStalling = YES;
+    _allowsExternalPlayback = NO;
     _loadControl = nil;
     if (loadConfiguration != (id)[NSNull null]) {
         NSDictionary *map = loadConfiguration[@"darwinLoadControl"];
@@ -101,6 +106,7 @@
     _speed = 1.0f;
     _volume = 1.0f;
     _justAdvanced = NO;
+    _enqueuedAll = NO;
     _icyMetadata = @{};
     __weak __typeof__(self) weakSelf = self;
     [_methodChannel setMethodCallHandler:^(FlutterMethodCall* call, FlutterResult result) {
@@ -147,6 +153,9 @@
         } else if ([@"setPreferredPeakBitRate" isEqualToString:call.method]) {
             [self setPreferredPeakBitRate:(NSNumber *)request[@"bitRate"]];
             result(@{});
+        } else if ([@"setAllowsExternalPlayback" isEqualToString:call.method]) {
+            [self setAllowsExternalPlayback:(BOOL)([request[@"allowsExternalPlayback"] intValue] == 1)];
+            result(@{});
         } else if ([@"seek" isEqualToString:call.method]) {
             CMTime position = request[@"position"] == (id)[NSNull null] ? kCMTimePositiveInfinity : CMTimeMake([request[@"position"] longLongValue], 1000000);
             [self seek:position index:request[@"index"] completionHandler:^(BOOL finished) {
@@ -166,8 +175,8 @@
         } else {
             result(FlutterMethodNotImplemented);
         }
-    } @catch (id exception) {
-        //NSLog(@"Error in handleMethodCall");
+    } @catch (NSException *exception) {
+        //NSLog(@"%@", [exception callStackSymbols]);
         FlutterError *flutterError = [FlutterError errorWithCode:@"error" message:@"Error in handleMethodCall" details:nil];
         result(flutterError);
     }
@@ -448,15 +457,16 @@
 - (AudioSource *)decodeAudioSource:(NSDictionary *)data {
     NSString *type = data[@"type"];
     if ([@"progressive" isEqualToString:type]) {
-        return [[UriAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] loadControl:_loadControl];
+        return [[UriAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] loadControl:_loadControl headers:data[@"headers"] options:data[@"options"]];
     } else if ([@"dash" isEqualToString:type]) {
-        return [[UriAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] loadControl:_loadControl];
+        return [[UriAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] loadControl:_loadControl headers:data[@"headers"] options:data[@"options"]];
     } else if ([@"hls" isEqualToString:type]) {
-        return [[UriAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] loadControl:_loadControl];
+        return [[UriAudioSource alloc] initWithId:data[@"id"] uri:data[@"uri"] loadControl:_loadControl headers:data[@"headers"] options:data[@"options"]];
     } else if ([@"concatenating" isEqualToString:type]) {
         return [[ConcatenatingAudioSource alloc] initWithId:data[@"id"]
                                                audioSources:[self decodeAudioSources:data[@"children"]]
-                                               shuffleOrder:(NSArray<NSNumber *> *)data[@"shuffleOrder"]];
+                                               shuffleOrder:(NSArray<NSNumber *> *)data[@"shuffleOrder"]
+                                                lazyLoading:(NSNumber *)data[@"useLazyPreparation"]];
     } else if ([@"clipping" isEqualToString:type]) {
         return [[ClippingAudioSource alloc] initWithId:data[@"id"]
                                            audioSource:(UriAudioSource *)[self decodeAudioSource:data[@"child"]]
@@ -514,12 +524,19 @@
     /* [self dumpQueue]; */
 
     // Regenerate queue
+    _enqueuedAll = NO;
     if (!existingItem || _loopMode != loopOne) {
+        _enqueuedAll = YES;
         BOOL include = NO;
         for (int i = 0; i < [_order count]; i++) {
             int si = [_order[i] intValue];
             if (si == _index) include = YES;
             if (include && _indexedAudioSources[si].playerItem != existingItem) {
+                if (_indexedAudioSources[si].lazyLoading && _player.items.count >= TREADMILL_SIZE) {
+                    // Enqueue up until the first lazy item that does not fit on the treadmill.
+                    _enqueuedAll = NO;
+                    break;
+                }
                 //NSLog(@"inserting item %d", si);
                 [_player insertItem:_indexedAudioSources[si].playerItem afterItem:nil];
                 if (_loopMode == loopOne) {
@@ -532,7 +549,7 @@
 
     // Add next loop item if we're looping
     if (_order.count > 0) {
-        if (_loopMode == loopAll) {
+        if (_loopMode == loopAll && _enqueuedAll) {
             int si = [_order[0] intValue];
             //NSLog(@"### add loop item:%d", si);
             if (!_indexedAudioSources[si].playerItem2) {
@@ -641,6 +658,9 @@
                       forKeyPath:@"timeControlStatus"
                          options:NSKeyValueObservingOptionNew
                          context:nil];
+        }
+        if (@available(macOS 10.11, iOS 6.0, *)) {
+            _player.allowsExternalPlayback = _allowsExternalPlayback;
         }
         [_player addObserver:self
                   forKeyPath:@"currentItem"
@@ -938,9 +958,13 @@
                 if (_index == [_order[0] intValue] && playerItem == audioSource.playerItem2) {
                     [audioSource flip];
                     [self enqueueFrom:_index];
+                } else if (!_enqueuedAll) {
+                    [self enqueueFrom:_index];
                 } else {
                     [self updateEndAction];
                 }
+            } else if (!_enqueuedAll) {
+                [self enqueueFrom:_index];
             }
             _justAdvanced = NO;
         }
@@ -958,7 +982,7 @@
 - (void)sendErrorForItem:(IndexedPlayerItem *)playerItem {
     FlutterError *flutterError = [FlutterError errorWithCode:[NSString stringWithFormat:@"%d", (int)playerItem.error.code]
                                                      message:playerItem.error.localizedDescription
-                                                     details:nil];
+                                                     details:@{@"index": @([self indexForItem:playerItem])}];
     [self sendError:flutterError playerItem:playerItem];
 }
 
@@ -1157,6 +1181,15 @@
     }
 }
 
+- (void)setAllowsExternalPlayback:(BOOL)allowsExternalPlayback {
+    _allowsExternalPlayback = allowsExternalPlayback;
+    if (@available(macOS 10.11, iOS 6.0, *)) {
+        if (_player) {
+            _player.allowsExternalPlayback = allowsExternalPlayback;
+        }
+    }
+}
+
 - (void)seek:(CMTime)position index:(NSNumber *)newIndex completionHandler:(void (^)(BOOL))completionHandler {
     if (_processingState == none || _processingState == loading) {
         if (completionHandler) {
@@ -1238,6 +1271,7 @@
                         _player.rate = _speed;
                     }
                 }
+                [self broadcastPlaybackEvent];
                 completionHandler(YES);
             }
         }

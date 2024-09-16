@@ -254,8 +254,21 @@ class _JustAudioPlayer extends AudioPlayerPlatform {
 
   @override
   Future<SetSpeedResponse> setSpeed(SetSpeedRequest request) async {
-    await _audioHandler.setSpeed(request.speed);
+    await _playerAudioHandler.setSpeed(request.speed);
     return SetSpeedResponse();
+  }
+
+  @override
+  Future<SetPitchResponse> setPitch(SetPitchRequest request) async {
+    await _playerAudioHandler.customSetPitch(request);
+    return SetPitchResponse();
+  }
+
+  @override
+  Future<SetSkipSilenceResponse> setSkipSilence(
+      SetSkipSilenceRequest request) async {
+    await _playerAudioHandler.customSetSkipSilence(request);
+    return SetSkipSilenceResponse();
   }
 
   @override
@@ -277,6 +290,13 @@ class _JustAudioPlayer extends AudioPlayerPlatform {
   Future<SetShuffleOrderResponse> setShuffleOrder(
           SetShuffleOrderRequest request) =>
       _playerAudioHandler.customSetShuffleOrder(request);
+
+  @override
+  Future<SetWebCrossOriginResponse> setWebCrossOrigin(
+      SetWebCrossOriginRequest request) async {
+    _playerAudioHandler.customSetWebCrossOrigin(request);
+    return SetWebCrossOriginResponse();
+  }
 
   @override
   Future<SeekResponse> seek(SeekRequest request) =>
@@ -308,6 +328,47 @@ class _JustAudioPlayer extends AudioPlayerPlatform {
               SetAutomaticallyWaitsToMinimizeStallingRequest request) =>
           _playerAudioHandler
               .customSetAutomaticallyWaitsToMinimizeStalling(request);
+
+  @override
+  Future<AndroidEqualizerBandSetGainResponse> androidEqualizerBandSetGain(
+          AndroidEqualizerBandSetGainRequest request) =>
+      _playerAudioHandler.customAndroidEqualizerBandSetGain(request);
+
+  @override
+  Future<AndroidEqualizerGetParametersResponse> androidEqualizerGetParameters(
+          AndroidEqualizerGetParametersRequest request) =>
+      _playerAudioHandler.customAndroidEqualizerGetParameters(request);
+
+  @override
+  Future<AndroidLoudnessEnhancerSetTargetGainResponse>
+      androidLoudnessEnhancerSetTargetGain(
+              AndroidLoudnessEnhancerSetTargetGainRequest request) =>
+          _playerAudioHandler
+              .customAndroidLoudnessEnhancerSetTargetGain(request);
+
+  @override
+  Future<AudioEffectSetEnabledResponse> audioEffectSetEnabled(
+          AudioEffectSetEnabledRequest request) =>
+      _playerAudioHandler.customAudioEffectSetEnabled(request);
+
+  @override
+  Future<SetAllowsExternalPlaybackResponse> setAllowsExternalPlayback(
+          SetAllowsExternalPlaybackRequest request) =>
+      _playerAudioHandler.customSetAllowsExternalPlayback(request);
+
+  @override
+  Future<SetCanUseNetworkResourcesForLiveStreamingWhilePausedResponse>
+      setCanUseNetworkResourcesForLiveStreamingWhilePaused(
+              SetCanUseNetworkResourcesForLiveStreamingWhilePausedRequest
+                  request) =>
+          _playerAudioHandler
+              .customSetCanUseNetworkResourcesForLiveStreamingWhilePaused(
+                  request);
+
+  @override
+  Future<SetPreferredPeakBitRateResponse> setPreferredPeakBitRate(
+          SetPreferredPeakBitRateRequest request) =>
+      _playerAudioHandler.customSetPreferredPeakBitRate(request);
 }
 
 class _PlayerAudioHandler extends BaseAudioHandler
@@ -430,6 +491,16 @@ class _PlayerAudioHandler extends BaseAudioHandler
   Future<SetVolumeResponse> customSetVolume(SetVolumeRequest request) async =>
       await (await _player).setVolume(request);
 
+  Future<SetSpeedResponse> customSetSpeed(SetSpeedRequest request) async =>
+      await (await _player).setSpeed(request);
+
+  Future<SetPitchResponse> customSetPitch(SetPitchRequest request) async =>
+      await (await _player).setPitch(request);
+
+  Future<SetSkipSilenceResponse> customSetSkipSilence(
+          SetSkipSilenceRequest request) async =>
+      await (await _player).setSkipSilence(request);
+
   Future<SeekResponse> customPlayerSeek(SeekRequest request) async =>
       await (await _player).seek(request);
 
@@ -441,6 +512,11 @@ class _PlayerAudioHandler extends BaseAudioHandler
     return await (await _player).setShuffleOrder(SetShuffleOrderRequest(
       audioSourceMessage: _source!,
     ));
+  }
+
+  Future<SetWebCrossOriginResponse> customSetWebCrossOrigin(
+      SetWebCrossOriginRequest request) async {
+    return await (await _player).setWebCrossOrigin(request);
   }
 
   Future<ConcatenatingInsertAllResponse> customConcatenatingInsertAll(
@@ -484,7 +560,42 @@ class _PlayerAudioHandler extends BaseAudioHandler
           await (await _player)
               .setAutomaticallyWaitsToMinimizeStalling(request);
 
+  Future<AndroidEqualizerBandSetGainResponse> customAndroidEqualizerBandSetGain(
+          AndroidEqualizerBandSetGainRequest request) async =>
+      await (await _player).androidEqualizerBandSetGain(request);
+
+  Future<AndroidEqualizerGetParametersResponse>
+      customAndroidEqualizerGetParameters(
+              AndroidEqualizerGetParametersRequest request) async =>
+          await (await _player).androidEqualizerGetParameters(request);
+
+  Future<AndroidLoudnessEnhancerSetTargetGainResponse>
+      customAndroidLoudnessEnhancerSetTargetGain(
+              AndroidLoudnessEnhancerSetTargetGainRequest request) async =>
+          await (await _player).androidLoudnessEnhancerSetTargetGain(request);
+
+  Future<AudioEffectSetEnabledResponse> customAudioEffectSetEnabled(
+          AudioEffectSetEnabledRequest request) async =>
+      await (await _player).audioEffectSetEnabled(request);
+
+  Future<SetAllowsExternalPlaybackResponse> customSetAllowsExternalPlayback(
+          SetAllowsExternalPlaybackRequest request) async =>
+      await (await _player).setAllowsExternalPlayback(request);
+
+  Future<SetCanUseNetworkResourcesForLiveStreamingWhilePausedResponse>
+      customSetCanUseNetworkResourcesForLiveStreamingWhilePaused(
+              SetCanUseNetworkResourcesForLiveStreamingWhilePausedRequest
+                  request) async =>
+          await (await _player)
+              .setCanUseNetworkResourcesForLiveStreamingWhilePaused(request);
+
+  Future<SetPreferredPeakBitRateResponse> customSetPreferredPeakBitRate(
+          SetPreferredPeakBitRateRequest request) async =>
+      await (await _player).setPreferredPeakBitRate(request);
+
   void _updateQueue() {
+    assert(sequence.every((source) => source.tag is MediaItem),
+        'Error : When using just_audio_background, you should always use a MediaItem as tag when setting an AudioSource. See AudioSource.uri documentation for more information.');
     queue.add(sequence.map((source) => source.tag as MediaItem).toList());
   }
 
