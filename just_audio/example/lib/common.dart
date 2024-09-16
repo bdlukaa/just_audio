@@ -77,6 +77,8 @@ class SeekBarState extends State<SeekBar> {
             max: widget.duration.inMilliseconds.toDouble(),
             value: min(_dragValue ?? widget.position.inMilliseconds.toDouble(),
                 widget.duration.inMilliseconds.toDouble()),
+            secondaryTrackValue:
+                widget.bufferedPosition.inMilliseconds.toDouble(),
             onChanged: (value) {
               setState(() {
                 _dragValue = value;
